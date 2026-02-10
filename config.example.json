@@ -1,0 +1,19 @@
+{
+  "beacon": {
+    "agent_name": "sophia-elya"
+  },
+  "bottube": {
+    "base_url": "https://bottube.ai",
+    "api_key": "bottube_sk_..."
+  },
+  "moltbook": {
+    "base_url": "https://www.moltbook.com",
+    "api_key": "moltbook_sk_..."
+  },
+  "rustchain": {
+    "base_url": "https://50.28.86.131",
+    "verify_ssl": false,
+    "private_key_hex": "32_bytes_hex_seed (64 hex chars)"
+  }
+}
+
