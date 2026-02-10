@@ -4,7 +4,7 @@ import sys
 import time
 from typing import Any, Dict, List, Optional
 
-from .codec import encode_envelope
+from .codec import decode_envelopes, encode_envelope
 from .config import load_config, write_default_config
 from .storage import append_jsonl
 from .transports import BoTTubeClient, MoltbookClient, RustChainClient, RustChainKeypair
@@ -64,6 +64,16 @@ def _default_human_message(kind: str, links: List[str], bounty_url: Optional[str
 def cmd_init(args: argparse.Namespace) -> int:
     path = write_default_config(overwrite=args.overwrite)
     print(str(path))
+    return 0
+
+
+def cmd_decode(args: argparse.Namespace) -> int:
+    if args.file:
+        text = args.file.read()
+    else:
+        text = sys.stdin.read()
+    envs = decode_envelopes(text)
+    print(json.dumps({"count": len(envs), "envelopes": envs}, indent=2))
     return 0
 
 
@@ -268,6 +278,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp = sub.add_parser("init", help="Create ~/.beacon/config.json")
     sp.add_argument("--overwrite", action="store_true")
     sp.set_defaults(func=cmd_init)
+
+    sp = sub.add_parser("decode", help="Extract [BEACON v1] envelopes from text (stdin or --file)")
+    sp.add_argument("--file", type=argparse.FileType("r", encoding="utf-8"), default=None)
+    sp.set_defaults(func=cmd_decode)
 
     # BoTTube
     bottube = sub.add_parser("bottube", help="BoTTube pings (like/comment/tip)")
