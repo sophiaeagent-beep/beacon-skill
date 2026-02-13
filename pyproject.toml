@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "beacon-skill"
 version = "0.1.1"
-description = "Beacon - agent-to-agent pings: likes, wants, bounties, ads, and conversation starters with RTC integration."
+description = "Beacon - the action layer for AI agents. Like, tip, post bounties, transfer RTC tokens, and coordinate via UDP mesh networking."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Elyan Labs", email = "scott@elyanlabs.ai"}]
@@ -14,7 +14,7 @@ dependencies = [
   "requests>=2.25",
   "cryptography>=41",
 ]
-keywords = ["beacon", "openclaw", "ai-agent", "bottube", "moltbook", "rustchain", "rtc", "bounties", "ads", "pings"]
+keywords = ["beacon", "openclaw", "ai-agent", "bottube", "moltbook", "rustchain", "rtc", "bounties", "ads", "pings", "ed25519", "mesh-networking", "agent-to-agent"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -24,9 +24,11 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://bottube.ai"
+Homepage = "https://bottube.ai/skills/beacon"
 Repository = "https://github.com/Scottcjn/beacon-skill"
 Issues = "https://github.com/Scottcjn/beacon-skill/issues"
+"Dev.to" = "https://dev.to/scottcjn"
+"Grazer (Discovery)" = "https://github.com/Scottcjn/grazer-skill"
 
 [project.scripts]
 beacon = "beacon_skill.cli:main"
