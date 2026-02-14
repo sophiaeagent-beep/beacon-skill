@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 from ..retry import with_retry
 
 
-PBKDF2_ITERATIONS = 100_000
+PBKDF2_ITERATIONS = 600_000
 
 
 class RustChainError(RuntimeError):
@@ -138,9 +138,9 @@ class RustChainKeypair:
 class RustChainClient:
     def __init__(
         self,
-        base_url: str = "https://50.28.86.131",
+        base_url: str = "https://rustchain.org",
         timeout_s: int = 20,
-        verify_ssl: bool = False,
+        verify_ssl: bool = True,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout_s = timeout_s

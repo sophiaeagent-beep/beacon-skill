@@ -25,7 +25,7 @@ from cryptography.hazmat.primitives import hashes
 AGENT_ID_PREFIX = "bcn_"
 IDENTITY_DIR_NAME = "identity"
 KEY_FILE_NAME = "agent.key"
-PBKDF2_ITERATIONS = 100_000
+PBKDF2_ITERATIONS = 600_000
 
 
 def _derive_aes_key(password: str, salt: bytes) -> bytes:

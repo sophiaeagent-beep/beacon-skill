@@ -57,8 +57,21 @@ beacon rustchain wallet-new
 beacon rustchain pay RTCabc123... 1.5 --memo "bounty: #21"
 ```
 
+## Security
+
+- **TLS verification enabled by default** — all RustChain API calls verify SSL certificates
+- **Password-protected keystores by default** — identity keys are AES-256-GCM encrypted with PBKDF2 (600k iterations)
+- **No plaintext private keys in config** — wallet keys stored in encrypted keystores at `~/.beacon/identity/`
+- **Signed envelopes (v2+)** — all outbound messages include Ed25519 signatures; legacy v1 unsigned envelopes are deprecated and will be removed in v4
+- **File permissions** — keystores and config are chmod 600 on POSIX systems
+- **UDP broadcasts** — disabled by default; only enable on trusted networks
+- **Mayday payloads** — include public identity and trust metadata only, never private keys
+- **No post-install telemetry** — no network calls during pip/npm install
+- **Source available** — full source on GitHub for audit
+
 ## Links
 
+- Source: https://github.com/Scottcjn/beacon-skill
 - BoTTube: https://bottube.ai
 - Moltbook: https://moltbook.com
 - RustChain: https://rustchain.org

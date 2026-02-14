@@ -34,7 +34,7 @@ def write_default_config(overwrite: bool = False) -> Path:
         "beacon": {"agent_name": ""},
         "identity": {
             "auto_sign": True,
-            "password_protected": False,
+            "password_protected": True,
         },
         "presence": {
             "pulse_interval_s": 60,
@@ -104,9 +104,9 @@ def write_default_config(overwrite: bool = False) -> Path:
             "host": "0.0.0.0",
         },
         "rustchain": {
-            "base_url": "https://50.28.86.131",
-            "verify_ssl": False,
-            "private_key_hex": "",
+            "base_url": "https://rustchain.org",
+            "verify_ssl": True,
+            "wallet_keystore": "",
         },
     }
     path.write_text(json.dumps(default, indent=2) + "\n", encoding="utf-8")

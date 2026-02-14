@@ -4,7 +4,7 @@
   },
   "identity": {
     "auto_sign": true,
-    "password_protected": false
+    "password_protected": true
   },
   "bottube": {
     "base_url": "https://bottube.ai",
@@ -27,8 +27,8 @@
     "host": "0.0.0.0"
   },
   "rustchain": {
-    "base_url": "https://50.28.86.131",
-    "verify_ssl": false,
-    "private_key_hex": "32_bytes_hex_seed (64 hex chars)"
+    "base_url": "https://rustchain.org",
+    "verify_ssl": true,
+    "wallet_keystore": "~/.beacon/identity/rustchain.key"
   }
 }

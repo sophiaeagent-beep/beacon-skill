@@ -21,7 +21,7 @@ __all__ = [
     "HybridManager",
 ]
 
-__version__ = "2.8.0"
+__version__ = "3.1.0"
 
 # Lazy imports — only resolve when accessed.
 from .identity import AgentIdentity  # noqa: E402, F401
