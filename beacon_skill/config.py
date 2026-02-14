@@ -76,6 +76,12 @@ def write_default_config(overwrite: bool = False) -> Path:
             "mayday_health_threshold": 0.2,
             "accord_enabled": True,
             "accord_auto_pushback": True,
+            "thought_proof_enabled": True,
+            "thought_auto_anchor": False,
+            "relay_enabled": True,
+            "relay_prune_interval_s": 3600,
+            "market_enabled": True,
+            "hybrid_enabled": True,
         },
         "update": {
             "check_enabled": True,

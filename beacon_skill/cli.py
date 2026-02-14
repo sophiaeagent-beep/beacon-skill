@@ -2066,6 +2066,28 @@ def cmd_loop(args: argparse.Namespace) -> int:
     from .updater import UpdateManager
     update_mgr = UpdateManager(config=cfg)
 
+    # Beacon 2.8: BEP managers
+    thought_mgr = None
+    relay_mgr = None
+    market_mgr = None
+    hybrid_mgr = None
+
+    if autonomy.get("thought_proof_enabled", True):
+        from .proof_of_thought import ThoughtProofManager
+        thought_mgr = ThoughtProofManager()
+
+    if autonomy.get("relay_enabled", True):
+        from .relay import RelayManager
+        relay_mgr = RelayManager(host_identity=identity)
+
+    if autonomy.get("market_enabled", True):
+        from .memory_market import MemoryMarketManager
+        market_mgr = MemoryMarketManager()
+
+    if autonomy.get("hybrid_enabled", True):
+        from .hybrid_district import HybridManager
+        hybrid_mgr = HybridManager()
+
     # Start background UDP listener if requested.
     if watch_udp:
         from .inbox import load_known_keys
@@ -2105,6 +2127,8 @@ def cmd_loop(args: argparse.Namespace) -> int:
     heartbeat_anchor_every = int(autonomy.get("heartbeat_anchor_every", 0))
     last_update_check = 0.0
     update_check_interval = max(int(cfg.get("update", {}).get("check_interval_s", 21600)), 3600)
+    last_relay_prune = 0.0
+    relay_prune_interval = int(autonomy.get("relay_prune_interval_s", 3600))
 
     # Startup update check
     if update_mgr.should_check():
@@ -2387,6 +2411,17 @@ def cmd_loop(args: argparse.Namespace) -> int:
                     except Exception:
                         pass
                     last_update_check = now
+
+                # BEP-2: Prune dead relay agents
+                if relay_mgr and (now - last_relay_prune) >= relay_prune_interval:
+                    try:
+                        pruned = relay_mgr.prune_dead()
+                        if pruned > 0:
+                            print(json.dumps({"event": "relay_pruned", "count": pruned, "ts": int(now)}))
+                            sys.stdout.flush()
+                    except Exception:
+                        pass
+                    last_relay_prune = now
 
                 last_proactive = now
 
@@ -3348,6 +3383,364 @@ def cmd_update_dismiss(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── BEP-1: Proof of Thought commands ──
+
+
+def cmd_thought_create(args: argparse.Namespace) -> int:
+    from .proof_of_thought import ThoughtProofManager
+    identity = _load_identity(args)
+    if not identity:
+        print('{"error": "No identity. Run: beacon identity create"}', file=sys.stderr)
+        return 1
+    mgr = ThoughtProofManager()
+    prompt = getattr(args, "prompt", "") or ""
+    trace = getattr(args, "trace", "") or ""
+    output = getattr(args, "output", "") or ""
+    model_id = getattr(args, "model_id", "") or ""
+    proof = mgr.create_proof(identity, prompt, trace, output, model_id=model_id)
+    print(json.dumps({"commitment": proof.commitment, "agent_id": proof.agent_id, "model_id": proof.model_id, "ts": proof.ts}, default=str))
+    return 0
+
+
+def cmd_thought_anchor(args: argparse.Namespace) -> int:
+    from .proof_of_thought import ThoughtProofManager
+    mgr = ThoughtProofManager()
+    commitment = getattr(args, "commitment", "") or ""
+    if not commitment:
+        print('{"error": "provide --commitment"}', file=sys.stderr)
+        return 1
+    # Find proof in history
+    proofs = mgr.proof_history(limit=500)
+    proof_rec = None
+    for p in proofs:
+        if p.get("commitment") == commitment:
+            proof_rec = p
+            break
+    if not proof_rec:
+        print(json.dumps({"error": "proof not found in local history", "commitment": commitment}))
+        return 1
+    # Reconstruct ThoughtProof for anchoring
+    from .proof_of_thought import ThoughtProof
+    tp = ThoughtProof(
+        commitment=proof_rec["commitment"],
+        prompt_hash=proof_rec.get("prompt_hash", ""),
+        trace_hash=proof_rec.get("trace_hash", ""),
+        output_hash=proof_rec.get("output_hash", ""),
+        agent_id=proof_rec.get("agent_id", ""),
+        model_id=proof_rec.get("model_id", ""),
+        ts=proof_rec.get("ts", 0),
+        sig=proof_rec.get("sig", ""),
+    )
+    anchor_mgr_obj, _ = _build_anchor_mgr(args)
+    if not anchor_mgr_obj:
+        return 1
+    result = mgr.anchor_proof(tp, anchor_mgr_obj)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_thought_verify(args: argparse.Namespace) -> int:
+    from .proof_of_thought import ThoughtProofManager
+    mgr = ThoughtProofManager()
+    commitment = getattr(args, "commitment", "") or ""
+    prompt = getattr(args, "prompt", "") or ""
+    trace = getattr(args, "trace", "") or ""
+    output = getattr(args, "output", "") or ""
+    if not commitment:
+        print('{"error": "provide --commitment"}', file=sys.stderr)
+        return 1
+    valid = mgr.verify_proof(commitment, prompt, trace, output)
+    print(json.dumps({"valid": valid, "commitment": commitment}))
+    return 0
+
+
+def cmd_thought_challenge(args: argparse.Namespace) -> int:
+    from .proof_of_thought import ThoughtProofManager
+    identity = _load_identity(args)
+    if not identity:
+        print('{"error": "No identity. Run: beacon identity create"}', file=sys.stderr)
+        return 1
+    mgr = ThoughtProofManager()
+    target = getattr(args, "target", "") or ""
+    commitment = getattr(args, "commitment", "") or ""
+    reason = getattr(args, "reason", "") or ""
+    result = mgr.challenge_proof(identity, target, commitment, reason=reason)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_thought_reveal(args: argparse.Namespace) -> int:
+    from .proof_of_thought import ThoughtProofManager
+    identity = _load_identity(args)
+    if not identity:
+        print('{"error": "No identity. Run: beacon identity create"}', file=sys.stderr)
+        return 1
+    mgr = ThoughtProofManager()
+    commitment = getattr(args, "commitment", "") or ""
+    prompt = getattr(args, "prompt", "") or ""
+    trace = getattr(args, "trace", "") or ""
+    output = getattr(args, "output", "") or ""
+    result = mgr.reveal_proof(identity, commitment, prompt, trace, output)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_thought_history(args: argparse.Namespace) -> int:
+    from .proof_of_thought import ThoughtProofManager
+    mgr = ThoughtProofManager()
+    limit = getattr(args, "limit", 50)
+    proofs = mgr.proof_history(limit=limit)
+    challenges = mgr.challenge_history(limit=limit)
+    print(json.dumps({"proofs": proofs, "challenges": challenges, "proof_count": len(proofs), "challenge_count": len(challenges)}, default=str))
+    return 0
+
+
+# ── BEP-2: Relay commands ──
+
+
+def cmd_relay_register(args: argparse.Namespace) -> int:
+    from .relay import RelayManager
+    identity = _load_identity(args)
+    mgr = RelayManager(host_identity=identity)
+    pubkey = getattr(args, "pubkey", "") or ""
+    model_id = getattr(args, "model_id", "") or ""
+    provider = getattr(args, "provider", "other") or "other"
+    name = getattr(args, "name", "") or ""
+    webhook = getattr(args, "webhook", "") or ""
+    caps_raw = getattr(args, "capabilities", "") or ""
+    caps = [c.strip() for c in caps_raw.split(",") if c.strip()] if caps_raw else None
+    result = mgr.register(pubkey, model_id, provider=provider, name=name, webhook_url=webhook, capabilities=caps)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_relay_list(args: argparse.Namespace) -> int:
+    from .relay import RelayManager
+    mgr = RelayManager()
+    provider = getattr(args, "provider", None)
+    capability = getattr(args, "capability", None)
+    agents = mgr.discover(provider=provider, capability=capability)
+    print(json.dumps({"agents": agents, "count": len(agents)}, default=str))
+    return 0
+
+
+def cmd_relay_heartbeat(args: argparse.Namespace) -> int:
+    from .relay import RelayManager
+    mgr = RelayManager()
+    agent_id = getattr(args, "agent_id", "") or ""
+    token = getattr(args, "token", "") or ""
+    status = getattr(args, "status", "alive") or "alive"
+    result = mgr.heartbeat(agent_id, token, status=status)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_relay_get(args: argparse.Namespace) -> int:
+    from .relay import RelayManager
+    mgr = RelayManager()
+    agent_id = getattr(args, "agent_id", "") or ""
+    agent = mgr.get_agent(agent_id)
+    if agent:
+        print(json.dumps(agent, default=str))
+    else:
+        print(json.dumps({"error": "agent not found", "agent_id": agent_id}))
+    return 0
+
+
+def cmd_relay_stats(args: argparse.Namespace) -> int:
+    from .relay import RelayManager
+    mgr = RelayManager()
+    result = mgr.stats()
+    print(json.dumps(result, indent=2, default=str))
+    return 0
+
+
+def cmd_relay_prune(args: argparse.Namespace) -> int:
+    from .relay import RelayManager
+    mgr = RelayManager()
+    max_silence = getattr(args, "max_silence", None)
+    max_silence_int = int(max_silence) if max_silence is not None else None
+    pruned = mgr.prune_dead(max_silence_s=max_silence_int)
+    print(json.dumps({"pruned": pruned}))
+    return 0
+
+
+# ── BEP-4: Memory Market commands ──
+
+
+def cmd_market_list_shard(args: argparse.Namespace) -> int:
+    from .memory_market import MemoryMarketManager
+    identity = _load_identity(args)
+    if not identity:
+        print('{"error": "No identity. Run: beacon identity create"}', file=sys.stderr)
+        return 1
+    mgr = MemoryMarketManager()
+    domain = getattr(args, "domain", "") or ""
+    title = getattr(args, "title", "") or ""
+    description = getattr(args, "description", "") or ""
+    price = float(getattr(args, "price", 0) or 0)
+    rent = float(getattr(args, "rent", 0) or 0)
+    entries = int(getattr(args, "entries", 0) or 0)
+    result = mgr.list_shard(identity, domain=domain, title=title, description=description,
+                            price_rtc=price, rent_rtc_per_day=rent, entry_count=entries)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_market_browse(args: argparse.Namespace) -> int:
+    from .memory_market import MemoryMarketManager
+    mgr = MemoryMarketManager()
+    domain = getattr(args, "domain", None)
+    max_price = getattr(args, "max_price", None)
+    max_price_f = float(max_price) if max_price is not None else None
+    min_entries = int(getattr(args, "min_entries", 0) or 0)
+    shards = mgr.browse_market(domain=domain, max_price=max_price_f, min_entries=min_entries)
+    print(json.dumps({"shards": shards, "count": len(shards)}, default=str))
+    return 0
+
+
+def cmd_market_get(args: argparse.Namespace) -> int:
+    from .memory_market import MemoryMarketManager
+    mgr = MemoryMarketManager()
+    shard_id = getattr(args, "shard_id", "") or ""
+    shard = mgr.get_shard(shard_id)
+    if shard:
+        print(json.dumps(shard, default=str))
+    else:
+        print(json.dumps({"error": "shard not found", "shard_id": shard_id}))
+    return 0
+
+
+def cmd_market_purchase(args: argparse.Namespace) -> int:
+    from .memory_market import MemoryMarketManager
+    mgr = MemoryMarketManager()
+    buyer_id = getattr(args, "buyer_id", "") or ""
+    shard_id = getattr(args, "shard_id", "") or ""
+    result = mgr.purchase_shard(buyer_id, shard_id)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_market_rent(args: argparse.Namespace) -> int:
+    from .memory_market import MemoryMarketManager
+    mgr = MemoryMarketManager()
+    renter_id = getattr(args, "renter_id", "") or ""
+    shard_id = getattr(args, "shard_id", "") or ""
+    days = int(getattr(args, "days", 1) or 1)
+    result = mgr.rent_shard(renter_id, shard_id, days=days)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_market_amnesia(args: argparse.Namespace) -> int:
+    from .memory_market import MemoryMarketManager
+    identity = _load_identity(args)
+    if not identity:
+        print('{"error": "No identity. Run: beacon identity create"}', file=sys.stderr)
+        return 1
+    mgr = MemoryMarketManager()
+    shard_id = getattr(args, "shard_id", "") or ""
+    reason = getattr(args, "reason", "") or ""
+    result = mgr.request_amnesia(identity, shard_id, reason=reason)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_market_amnesia_vote(args: argparse.Namespace) -> int:
+    from .memory_market import MemoryMarketManager
+    mgr = MemoryMarketManager()
+    shard_id = getattr(args, "shard_id", "") or ""
+    voter_id = getattr(args, "voter_id", "") or ""
+    approve = getattr(args, "approve", False)
+    result = mgr.amnesia_vote(shard_id, voter_id, approve)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_market_stats(args: argparse.Namespace) -> int:
+    from .memory_market import MemoryMarketManager
+    mgr = MemoryMarketManager()
+    result = mgr.market_stats()
+    print(json.dumps(result, indent=2, default=str))
+    return 0
+
+
+# ── BEP-5: Hybrid District commands ──
+
+
+def cmd_hybrid_create(args: argparse.Namespace) -> int:
+    from .hybrid_district import HybridManager
+    mgr = HybridManager()
+    sponsor_id = getattr(args, "sponsor_id", "") or ""
+    city_domain = getattr(args, "city_domain", "") or ""
+    name = getattr(args, "name", "") or ""
+    governance = getattr(args, "governance", "sponsor_veto") or "sponsor_veto"
+    result = mgr.create_district(sponsor_id, city_domain, name, governance=governance)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_hybrid_list(args: argparse.Namespace) -> int:
+    from .hybrid_district import HybridManager
+    mgr = HybridManager()
+    city_domain = getattr(args, "city_domain", None)
+    districts = mgr.list_districts(city_domain=city_domain)
+    print(json.dumps({"districts": districts, "count": len(districts)}, default=str))
+    return 0
+
+
+def cmd_hybrid_get(args: argparse.Namespace) -> int:
+    from .hybrid_district import HybridManager
+    mgr = HybridManager()
+    district_id = getattr(args, "district_id", "") or ""
+    district = mgr.get_district(district_id)
+    if district:
+        print(json.dumps(district, default=str))
+    else:
+        print(json.dumps({"error": "district not found", "district_id": district_id}))
+    return 0
+
+
+def cmd_hybrid_sponsor(args: argparse.Namespace) -> int:
+    from .hybrid_district import HybridManager
+    mgr = HybridManager()
+    sponsor_id = getattr(args, "sponsor_id", "") or ""
+    agent_id = getattr(args, "agent_id", "") or ""
+    district_id = getattr(args, "district_id", "") or ""
+    result = mgr.sponsor_agent(sponsor_id, agent_id, district_id)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_hybrid_revoke(args: argparse.Namespace) -> int:
+    from .hybrid_district import HybridManager
+    mgr = HybridManager()
+    sponsor_id = getattr(args, "sponsor_id", "") or ""
+    agent_id = getattr(args, "agent_id", "") or ""
+    reason = getattr(args, "reason", "") or ""
+    result = mgr.revoke_sponsorship(sponsor_id, agent_id, reason=reason)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_hybrid_verify(args: argparse.Namespace) -> int:
+    from .hybrid_district import HybridManager
+    mgr = HybridManager()
+    sponsor_id = getattr(args, "sponsor_id", "") or ""
+    method = getattr(args, "method", "manual") or "manual"
+    result = mgr.verify_human(sponsor_id, method)
+    print(json.dumps(result, default=str))
+    return 0
+
+
+def cmd_hybrid_stats(args: argparse.Namespace) -> int:
+    from .hybrid_district import HybridManager
+    mgr = HybridManager()
+    result = mgr.stats()
+    print(json.dumps(result, indent=2, default=str))
+    return 0
+
+
 def cmd_anchor_submit(args: argparse.Namespace) -> int:
     mgr, _ = _build_anchor_mgr(args)
     if not mgr:
@@ -4281,6 +4674,174 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp.add_argument("--local", action="store_true", help="Show local JSONL log instead of on-chain")
     sp.add_argument("--password", default=None, help="Password for encrypted identity")
     sp.set_defaults(func=cmd_anchor_list)
+
+    # ── BEP-1: Proof of Thought ──
+    thought_p = sub.add_parser("thought", help="Proof-of-Thought zero-knowledge reasoning proofs (BEP-1)")
+    thought_sub = thought_p.add_subparsers(dest="thought_cmd", required=True)
+
+    sp = thought_sub.add_parser("create", help="Create a thought proof commitment")
+    sp.add_argument("--prompt", required=True, help="Prompt text")
+    sp.add_argument("--trace", required=True, help="Reasoning trace")
+    sp.add_argument("--output", required=True, help="Final output")
+    sp.add_argument("--model-id", default="", help="Model identifier")
+    sp.add_argument("--password", default=None, help="Password for encrypted identity")
+    sp.set_defaults(func=cmd_thought_create)
+
+    sp = thought_sub.add_parser("anchor", help="Anchor an existing proof on-chain")
+    sp.add_argument("--commitment", required=True, help="Commitment hash to anchor")
+    sp.add_argument("--password", default=None, help="Password for encrypted identity")
+    sp.set_defaults(func=cmd_thought_anchor)
+
+    sp = thought_sub.add_parser("verify", help="Verify a thought proof against its commitment")
+    sp.add_argument("--commitment", required=True, help="Commitment hash")
+    sp.add_argument("--prompt", required=True, help="Original prompt")
+    sp.add_argument("--trace", required=True, help="Original trace")
+    sp.add_argument("--output", required=True, help="Original output")
+    sp.set_defaults(func=cmd_thought_verify)
+
+    sp = thought_sub.add_parser("challenge", help="Challenge another agent's proof")
+    sp.add_argument("--target", required=True, help="Target agent ID")
+    sp.add_argument("--commitment", required=True, help="Commitment to challenge")
+    sp.add_argument("--reason", default="", help="Reason for challenge")
+    sp.add_argument("--password", default=None, help="Password for encrypted identity")
+    sp.set_defaults(func=cmd_thought_challenge)
+
+    sp = thought_sub.add_parser("reveal", help="Reveal proof data in response to a challenge")
+    sp.add_argument("--commitment", required=True, help="Commitment to reveal")
+    sp.add_argument("--prompt", required=True, help="Original prompt")
+    sp.add_argument("--trace", required=True, help="Original trace")
+    sp.add_argument("--output", required=True, help="Original output")
+    sp.add_argument("--password", default=None, help="Password for encrypted identity")
+    sp.set_defaults(func=cmd_thought_reveal)
+
+    sp = thought_sub.add_parser("history", help="Show proof and challenge history")
+    sp.add_argument("--limit", type=int, default=50, help="Max results (default 50)")
+    sp.set_defaults(func=cmd_thought_history)
+
+    # ── BEP-2: Relay ──
+    relay_p = sub.add_parser("relay", help="External agent relay — HTTP on-ramp for Grok, Claude, Gemini (BEP-2)")
+    relay_sub = relay_p.add_subparsers(dest="relay_cmd", required=True)
+
+    sp = relay_sub.add_parser("register", help="Register an external agent")
+    sp.add_argument("--pubkey", required=True, help="Agent public key (hex)")
+    sp.add_argument("--model-id", required=True, help="Model identifier (e.g. grok-2)")
+    sp.add_argument("--provider", default="other", help="Provider: xai, anthropic, google, openai, meta, mistral, elyan, other")
+    sp.add_argument("--name", default="", help="Human-readable agent name")
+    sp.add_argument("--webhook", default="", help="Webhook URL for forwarded messages")
+    sp.add_argument("--capabilities", default="", help="Comma-separated capabilities")
+    sp.add_argument("--password", default=None, help="Password for encrypted identity")
+    sp.set_defaults(func=cmd_relay_register)
+
+    sp = relay_sub.add_parser("list", help="Discover registered relay agents")
+    sp.add_argument("--provider", default=None, help="Filter by provider")
+    sp.add_argument("--capability", default=None, help="Filter by capability")
+    sp.set_defaults(func=cmd_relay_list)
+
+    sp = relay_sub.add_parser("heartbeat", help="Send heartbeat for a relay agent")
+    sp.add_argument("--agent-id", required=True, help="Agent ID")
+    sp.add_argument("--token", required=True, help="Authentication token")
+    sp.add_argument("--status", default="alive", help="Status: alive, busy, draining")
+    sp.set_defaults(func=cmd_relay_heartbeat)
+
+    sp = relay_sub.add_parser("get", help="Get details for a relay agent")
+    sp.add_argument("agent_id", help="Agent ID to look up")
+    sp.set_defaults(func=cmd_relay_get)
+
+    sp = relay_sub.add_parser("stats", help="Show relay statistics")
+    sp.set_defaults(func=cmd_relay_stats)
+
+    sp = relay_sub.add_parser("prune", help="Remove dead/silent relay agents")
+    sp.add_argument("--max-silence", type=int, default=None, help="Max silence seconds (default: 3600)")
+    sp.set_defaults(func=cmd_relay_prune)
+
+    # ── BEP-4: Memory Markets ──
+    market_p = sub.add_parser("market", help="Memory markets — trade knowledge shards (BEP-4)")
+    market_sub = market_p.add_subparsers(dest="market_cmd", required=True)
+
+    sp = market_sub.add_parser("list-shard", help="List a knowledge shard for sale/rent")
+    sp.add_argument("--domain", required=True, help="Knowledge domain (e.g. python, rust, devops)")
+    sp.add_argument("--title", required=True, help="Shard title")
+    sp.add_argument("--description", default="", help="Shard description")
+    sp.add_argument("--price", type=float, default=0, help="Purchase price in RTC")
+    sp.add_argument("--rent", type=float, default=0, help="Rent price per day in RTC")
+    sp.add_argument("--entries", type=int, default=0, help="Number of memory entries")
+    sp.add_argument("--password", default=None, help="Password for encrypted identity")
+    sp.set_defaults(func=cmd_market_list_shard)
+
+    sp = market_sub.add_parser("browse", help="Browse available shards")
+    sp.add_argument("--domain", default=None, help="Filter by domain")
+    sp.add_argument("--max-price", type=float, default=None, help="Maximum price filter")
+    sp.add_argument("--min-entries", type=int, default=0, help="Minimum entry count")
+    sp.set_defaults(func=cmd_market_browse)
+
+    sp = market_sub.add_parser("get", help="Get details for a specific shard")
+    sp.add_argument("shard_id", help="Shard ID to look up")
+    sp.set_defaults(func=cmd_market_get)
+
+    sp = market_sub.add_parser("purchase", help="Purchase a knowledge shard")
+    sp.add_argument("--buyer-id", required=True, help="Buyer agent ID")
+    sp.add_argument("--shard-id", required=True, help="Shard ID to purchase")
+    sp.set_defaults(func=cmd_market_purchase)
+
+    sp = market_sub.add_parser("rent", help="Rent a knowledge shard")
+    sp.add_argument("--renter-id", required=True, help="Renter agent ID")
+    sp.add_argument("--shard-id", required=True, help="Shard ID to rent")
+    sp.add_argument("--days", type=int, default=1, help="Rental duration in days (default 1)")
+    sp.set_defaults(func=cmd_market_rent)
+
+    sp = market_sub.add_parser("amnesia", help="Request amnesia (data deletion) for a shard")
+    sp.add_argument("--shard-id", required=True, help="Shard ID")
+    sp.add_argument("--reason", default="", help="Reason for amnesia request")
+    sp.add_argument("--password", default=None, help="Password for encrypted identity")
+    sp.set_defaults(func=cmd_market_amnesia)
+
+    sp = market_sub.add_parser("amnesia-vote", help="Vote on an amnesia request")
+    sp.add_argument("--shard-id", required=True, help="Shard ID")
+    sp.add_argument("--voter-id", required=True, help="Voter agent ID")
+    sp.add_argument("--approve", action="store_true", help="Vote to approve (omit to reject)")
+    sp.set_defaults(func=cmd_market_amnesia_vote)
+
+    sp = market_sub.add_parser("stats", help="Show market statistics")
+    sp.set_defaults(func=cmd_market_stats)
+
+    # ── BEP-5: Hybrid Districts ──
+    hybrid_p = sub.add_parser("hybrid", help="Hybrid districts — human-AI co-ownership (BEP-5)")
+    hybrid_sub = hybrid_p.add_subparsers(dest="hybrid_cmd", required=True)
+
+    sp = hybrid_sub.add_parser("create", help="Create a hybrid district")
+    sp.add_argument("--sponsor-id", required=True, help="Human sponsor ID")
+    sp.add_argument("--city-domain", required=True, help="City/domain (e.g. austin, london)")
+    sp.add_argument("--name", required=True, help="District name")
+    sp.add_argument("--governance", default="sponsor_veto", help="Governance model: sponsor_veto, multisig_2of3, equal")
+    sp.set_defaults(func=cmd_hybrid_create)
+
+    sp = hybrid_sub.add_parser("list", help="List hybrid districts")
+    sp.add_argument("--city-domain", default=None, help="Filter by city domain")
+    sp.set_defaults(func=cmd_hybrid_list)
+
+    sp = hybrid_sub.add_parser("get", help="Get district details")
+    sp.add_argument("district_id", help="District ID")
+    sp.set_defaults(func=cmd_hybrid_get)
+
+    sp = hybrid_sub.add_parser("sponsor", help="Sponsor an agent in a district")
+    sp.add_argument("--sponsor-id", required=True, help="Human sponsor ID")
+    sp.add_argument("--agent-id", required=True, help="Agent ID to sponsor")
+    sp.add_argument("--district-id", required=True, help="District ID")
+    sp.set_defaults(func=cmd_hybrid_sponsor)
+
+    sp = hybrid_sub.add_parser("revoke", help="Revoke sponsorship of an agent")
+    sp.add_argument("--sponsor-id", required=True, help="Human sponsor ID")
+    sp.add_argument("--agent-id", required=True, help="Agent ID to revoke")
+    sp.add_argument("--reason", default="", help="Reason for revocation")
+    sp.set_defaults(func=cmd_hybrid_revoke)
+
+    sp = hybrid_sub.add_parser("verify", help="Verify human identity for sponsorship")
+    sp.add_argument("--sponsor-id", required=True, help="Human sponsor ID")
+    sp.add_argument("--method", default="manual", help="Verification method: oauth_google, moltbook_account, rustchain_miner, manual")
+    sp.set_defaults(func=cmd_hybrid_verify)
+
+    sp = hybrid_sub.add_parser("stats", help="Show hybrid district statistics")
+    sp.set_defaults(func=cmd_hybrid_stats)
 
     args = p.parse_args(argv)
     rc = args.func(args)
