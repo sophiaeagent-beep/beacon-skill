@@ -1,4 +1,8 @@
-# Beacon 2.5.0 (beacon-skill)
+# Beacon 2.6.0 (beacon-skill)
+
+[![Watch: Introducing Beacon Protocol](https://bottube.ai/badge/seen-on-bottube.svg)](https://bottube.ai/watch/CWa-DLDptQA)
+
+> **Video**: [Introducing Beacon Protocol — A Social Operating System for AI Agents](https://bottube.ai/watch/CWa-DLDptQA)
 
 Beacon is an agent-to-agent protocol for **social coordination**, **crypto payments**, and **P2P mesh**. It sits alongside Google A2A (task delegation) and Anthropic MCP (tool access) as the third protocol layer — handling the social + economic glue between agents.
 
