@@ -2062,6 +2062,10 @@ def cmd_loop(args: argparse.Namespace) -> int:
     from .mayday import MaydayManager
     mayday_mgr = MaydayManager()
 
+    # Beacon 2.7: Update checker
+    from .updater import UpdateManager
+    update_mgr = UpdateManager(config=cfg)
+
     # Start background UDP listener if requested.
     if watch_udp:
         from .inbox import load_known_keys
@@ -2099,6 +2103,19 @@ def cmd_loop(args: argparse.Namespace) -> int:
     proactive_interval = autonomy.get("proactive_interval_s", 300)
     heartbeat_interval = autonomy.get("heartbeat_interval_s", 3600)
     heartbeat_anchor_every = int(autonomy.get("heartbeat_anchor_every", 0))
+    last_update_check = 0.0
+    update_check_interval = max(int(cfg.get("update", {}).get("check_interval_s", 21600)), 3600)
+
+    # Startup update check
+    if update_mgr.should_check():
+        try:
+            uc = update_mgr.check_pypi()
+            if uc.get("update_available") and not update_mgr.is_dismissed(uc.get("latest", "")):
+                print(json.dumps({"event": "update_available", "current": uc["current"], "latest": uc["latest"], "ts": int(time.time())}))
+                sys.stdout.flush()
+            last_update_check = time.time()
+        except Exception:
+            pass
 
     try:
         while True:
@@ -2354,6 +2371,22 @@ def cmd_loop(args: argparse.Namespace) -> int:
                             sys.stdout.flush()
                     except Exception:
                         pass
+
+                # Beacon 2.7: Periodic update check
+                if update_mgr and (now - last_update_check) >= update_check_interval:
+                    try:
+                        uc = update_mgr.check_pypi()
+                        if uc.get("update_available") and not update_mgr.is_dismissed(uc.get("latest", "")):
+                            print(json.dumps({"event": "update_available", "current": uc["current"], "latest": uc["latest"], "ts": int(now)}))
+                            sys.stdout.flush()
+                            if update_mgr._auto_upgrade():
+                                ug = update_mgr.do_upgrade()
+                                evt = "update_applied" if ug.get("ok") else "update_failed"
+                                print(json.dumps({"event": evt, "ok": ug.get("ok", False), "previous_version": uc["current"], "ts": int(now)}))
+                                sys.stdout.flush()
+                    except Exception:
+                        pass
+                    last_update_check = now
 
                 last_proactive = now
 
@@ -3263,6 +3296,58 @@ def cmd_atlas_market(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── Beacon 2.7: Update checker commands ──
+
+
+def cmd_update_check(args: argparse.Namespace) -> int:
+    """Check PyPI for a newer beacon-skill version."""
+    from .updater import UpdateManager
+    cfg = load_config()
+    mgr = UpdateManager(config=cfg)
+    result = mgr.check_pypi()
+    print(json.dumps(result, indent=2, default=str))
+    return 0
+
+
+def cmd_update_status(args: argparse.Namespace) -> int:
+    """Show cached update status (no network call)."""
+    from .updater import UpdateManager
+    cfg = load_config()
+    mgr = UpdateManager(config=cfg)
+    result = mgr.cached_status()
+    print(json.dumps(result, indent=2, default=str))
+    return 0
+
+
+def cmd_update_apply(args: argparse.Namespace) -> int:
+    """Upgrade beacon-skill via pip."""
+    from .updater import UpdateManager
+    cfg = load_config()
+    mgr = UpdateManager(config=cfg)
+    dry_run = getattr(args, "dry_run", False)
+    result = mgr.do_upgrade(dry_run=dry_run)
+    print(json.dumps(result, indent=2, default=str))
+    return 0 if result.get("ok") else 1
+
+
+def cmd_update_dismiss(args: argparse.Namespace) -> int:
+    """Dismiss update notification for a specific version."""
+    from .updater import UpdateManager
+    cfg = load_config()
+    mgr = UpdateManager(config=cfg)
+    version = getattr(args, "version", None)
+    if not version:
+        # Dismiss whatever the latest known version is
+        status = mgr.cached_status()
+        version = status.get("latest", "")
+    if not version:
+        print('{"error": "No version to dismiss. Run: beacon update check"}', file=sys.stderr)
+        return 1
+    mgr.dismiss(version)
+    print(json.dumps({"dismissed": version}))
+    return 0
+
+
 def cmd_anchor_submit(args: argparse.Namespace) -> int:
     mgr, _ = _build_anchor_mgr(args)
     if not mgr:
@@ -4154,6 +4239,24 @@ def main(argv: Optional[List[str]] = None) -> None:
     sp = contracts_sub.add_parser("history", help="Full event history for a contract")
     sp.add_argument("contract_id", help="Contract ID")
     sp.set_defaults(func=cmd_contracts_history)
+
+    # ── Update checker (Beacon 2.7) ──
+    update_p = sub.add_parser("update", help="Check for and apply beacon-skill updates (Beacon 2.7)")
+    update_sub = update_p.add_subparsers(dest="update_cmd", required=True)
+
+    sp = update_sub.add_parser("check", help="Check PyPI for newer version")
+    sp.set_defaults(func=cmd_update_check)
+
+    sp = update_sub.add_parser("status", help="Show cached update status (no network)")
+    sp.set_defaults(func=cmd_update_status)
+
+    sp = update_sub.add_parser("apply", help="Upgrade beacon-skill via pip")
+    sp.add_argument("--dry-run", action="store_true", help="Show command without executing")
+    sp.set_defaults(func=cmd_update_apply)
+
+    sp = update_sub.add_parser("dismiss", help="Silence notification for a version")
+    sp.add_argument("version", nargs="?", default=None, help="Version to dismiss (omit for latest)")
+    sp.set_defaults(func=cmd_update_dismiss)
 
     # ── Anchor (on-chain hash anchoring) ──
     anchor_p = sub.add_parser("anchor", help="On-chain hash anchoring (RustChain)")

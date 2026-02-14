@@ -77,6 +77,12 @@ def write_default_config(overwrite: bool = False) -> Path:
             "accord_enabled": True,
             "accord_auto_pushback": True,
         },
+        "update": {
+            "check_enabled": True,
+            "check_interval_s": 21600,
+            "auto_upgrade": False,
+            "notify_in_loop": True,
+        },
         "bottube": {"base_url": "https://bottube.ai", "api_key": ""},
         "moltbook": {"base_url": "https://www.moltbook.com", "api_key": ""},
         "udp": {

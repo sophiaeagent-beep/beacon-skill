@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "beacon-skill"
-version = "2.6.0"
+version = "2.7.0"
 description = "Beacon - the AI agent orchestrator. Heartbeat, mayday, accords, virtual cities, and AI-to-AI calibration. Requires bottube + clawrtc + grazer-skill."
 readme = "README.md"
 license = {text = "MIT"}
